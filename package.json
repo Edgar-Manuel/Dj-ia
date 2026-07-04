@@ -1,0 +1,22 @@
+{
+  "name": "ai-dj",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI DJ — autonomous professional DJ powered by AI",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run build -w @ai-dj/shared && npm run build -w @ai-dj/server && npm run build -w @ai-dj/client",
+    "dev": "npm run dev -w @ai-dj/server & npm run dev -w @ai-dj/client",
+    "dev:server": "npm run dev -w @ai-dj/server",
+    "dev:client": "npm run dev -w @ai-dj/client",
+    "typecheck": "npm run typecheck -w @ai-dj/shared && npm run typecheck -w @ai-dj/server && npm run typecheck -w @ai-dj/client",
+    "start": "npm run start -w @ai-dj/server"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
