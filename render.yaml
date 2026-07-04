@@ -1,0 +1,15 @@
+# Despliegue full-stack (API Express + cliente) en Render.com:
+# un solo proceso Node sirve /api y la web compilada.
+services:
+  - type: web
+    name: ai-dj
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: '20'
+      # Opcional: descomenta para activar el planificador Claude
+      # - key: ANTHROPIC_API_KEY
+      #   sync: false
