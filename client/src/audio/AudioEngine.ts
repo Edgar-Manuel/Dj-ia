@@ -1,4 +1,4 @@
-import type { Track, TransitionPlan } from '@ai-dj/shared';
+import { beatgridOf, type Track, type TransitionPlan } from '@ai-dj/shared';
 import { Deck, type DeckId, type LoadedAudio } from './Deck';
 import { computeBufferPeaks, computePeaks, renderTrack } from './synth';
 
@@ -105,19 +105,31 @@ export class AudioEngine {
 
   /**
    * Execute a transition: `from` keeps playing while `to` (already loaded)
-   * starts, with type-specific EQ/filter/FX automation. Returns the moment
-   * (ctx time) at which the outgoing deck stops.
+   * starts, with type-specific EQ/filter/FX automation. `when` (ctx time)
+   * lets the caller anchor the whole transition on a beat of the outgoing
+   * deck. Returns the moment (ctx time) at which the outgoing deck stops.
    */
-  executeTransition(from: DeckId, to: DeckId, plan: TransitionPlan): number {
+  executeTransition(from: DeckId, to: DeckId, plan: TransitionPlan, when?: number): number {
     const out = this.deck(from);
     const inc = this.deck(to);
     if (!inc.track) return this.ctx.currentTime;
 
-    const now = this.ctx.currentTime;
-    const outBpm = out.track?.bpm ?? inc.track.bpm;
+    const now = Math.max(this.ctx.currentTime, when ?? 0);
+    const outBpm = out.track ? beatgridOf(out.track).bpm : beatgridOf(inc.track).bpm;
     const secPerBeat = 60 / outBpm;
     let blend = plan.beats * secPerBeat;
     const toB = to === 'B';
+
+    // Tempo sync: play the incoming track at the outgoing tempo while the
+    // decks overlap (within the ±8% beatmatch window), then glide back to
+    // its natural tempo once the blend is over.
+    const ratio = outBpm / beatgridOf(inc.track).bpm;
+    const sync = plan.type !== 'backspin' && Math.abs(ratio - 1) <= 0.08 ? ratio : 1;
+    const releaseSync = (atCtxTime: number): void => {
+      if (sync === 1) return;
+      const delayMs = Math.max(0, (atCtxTime - this.ctx.currentTime) * 1000);
+      setTimeout(() => inc.syncRate(1, secPerBeat * 8), delayMs);
+    };
 
     switch (plan.type) {
       case 'backspin': {
@@ -138,7 +150,8 @@ export class AudioEngine {
         out.delayFeedback.gain.setValueAtTime(0.72, now);
         out.volume.gain.setValueAtTime(1, now);
         out.volume.gain.linearRampToValueAtTime(0, now + blend * 0.6);
-        inc.play(plan.incomingOffset, now + blend * 0.25);
+        inc.play(plan.incomingOffset, now + Math.round((blend * 0.25) / secPerBeat) * secPerBeat, sync);
+        releaseSync(now + blend);
         this.animateCrossfade(toB ? 1 : 0, blend * 0.7);
         out.stop(now + blend + 2.5); // let the echo tail ring
         this.resetChannel(out, now + blend + 2.5);
@@ -149,7 +162,8 @@ export class AudioEngine {
         out.reverbSend.gain.linearRampToValueAtTime(1.1, now + blend * 0.4);
         out.volume.gain.setValueAtTime(1, now);
         out.volume.gain.linearRampToValueAtTime(0, now + blend * 0.8);
-        inc.play(plan.incomingOffset, now + blend * 0.3);
+        inc.play(plan.incomingOffset, now + Math.round((blend * 0.3) / secPerBeat) * secPerBeat, sync);
+        releaseSync(now + blend);
         this.animateCrossfade(toB ? 1 : 0, blend * 0.8);
         out.stop(now + blend + 3);
         this.resetChannel(out, now + blend + 3);
@@ -159,7 +173,8 @@ export class AudioEngine {
         out.delay.delayTime.setValueAtTime(secPerBeat * 0.5, now);
         out.delaySend.gain.setValueAtTime(0.85, now);
         out.delayFeedback.gain.setValueAtTime(0.6, now);
-        inc.play(plan.incomingOffset, now + secPerBeat * 2);
+        inc.play(plan.incomingOffset, now + secPerBeat * 2, sync);
+        releaseSync(now + blend);
         out.volume.gain.setValueAtTime(1, now + secPerBeat * 2);
         out.volume.gain.linearRampToValueAtTime(0, now + blend);
         this.animateCrossfade(toB ? 1 : 0, blend);
@@ -174,7 +189,8 @@ export class AudioEngine {
         inc.filter.type = 'lowpass';
         inc.filter.frequency.setValueAtTime(300, now);
         inc.filter.frequency.exponentialRampToValueAtTime(22050, now + blend);
-        inc.play(plan.incomingOffset, now);
+        inc.play(plan.incomingOffset, now, sync);
+        releaseSync(now + blend);
         this.animateCrossfade(toB ? 1 : 0, blend);
         out.stop(now + blend + 0.2);
         this.resetChannel(out, now + blend + 0.5);
@@ -192,7 +208,8 @@ export class AudioEngine {
         inc.eqLow.gain.linearRampToValueAtTime(0, mid + secPerBeat);
         out.eqHigh.gain.setValueAtTime(0, now + blend * 0.6);
         out.eqHigh.gain.linearRampToValueAtTime(-12, now + blend);
-        inc.play(plan.incomingOffset, now);
+        inc.play(plan.incomingOffset, now, sync);
+        releaseSync(now + blend);
         this.animateCrossfade(toB ? 1 : 0, blend);
         out.stop(now + blend + 0.2);
         this.resetChannel(out, now + blend + 0.5);
@@ -202,7 +219,8 @@ export class AudioEngine {
       case 'double-drop': {
         const lead = plan.type === 'double-drop' ? secPerBeat * 8 : secPerBeat * 4;
         blend = Math.max(blend, lead + secPerBeat * 2);
-        inc.play(plan.incomingOffset, now);
+        inc.play(plan.incomingOffset, now, sync);
+        releaseSync(now + blend);
         this.animateCrossfade(toB ? 1 : 0, plan.type === 'double-drop' ? blend : lead);
         if (plan.type === 'drop-mix') {
           out.volume.gain.setValueAtTime(1, now + lead - 0.05);
@@ -213,7 +231,8 @@ export class AudioEngine {
         return now + blend;
       }
       case 'quick-mix': {
-        inc.play(plan.incomingOffset, now);
+        inc.play(plan.incomingOffset, now, sync);
+        releaseSync(now + blend);
         this.animateCrossfade(toB ? 1 : 0, blend);
         out.stop(now + blend + 0.1);
         this.resetChannel(out, now + blend + 0.3);
@@ -224,7 +243,8 @@ export class AudioEngine {
       default: {
         inc.volume.gain.setValueAtTime(0.85, now);
         inc.volume.gain.linearRampToValueAtTime(1, now + blend);
-        inc.play(plan.incomingOffset, now);
+        inc.play(plan.incomingOffset, now, sync);
+        releaseSync(now + blend);
         this.animateCrossfade(toB ? 1 : 0, blend);
         out.stop(now + blend + 0.2);
         this.resetChannel(out, now + blend + 0.5);

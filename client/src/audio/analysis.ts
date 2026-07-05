@@ -1,27 +1,54 @@
-import { CAMELOT_KEYS, camelotToSemitone, isMinor, type CamelotKey } from '@ai-dj/shared';
+import {
+  CAMELOT_KEYS,
+  camelotToSemitone,
+  detectBeatgrid,
+  energyFromLufs,
+  integratedLoudness,
+  isMinor,
+  type Beatgrid,
+  type CamelotKey,
+} from '@ai-dj/shared';
 
 export interface AnalysisResult {
   bpm: number;
   key: CamelotKey;
   energy: number;
   loudness: number;
+  /** Integrated loudness per EBU R128. */
+  lufs: number;
+  /** Full tempo map: fractional BPM + beat/downbeat phase. */
+  beatgrid: Beatgrid;
 }
 
 /**
  * Real audio analysis for uploaded files, entirely in the browser:
- * - BPM: onset-energy autocorrelation over the 70–180 BPM range
- * - Key: chroma extraction (Goertzel) matched against Krumhansl profiles
- * - Energy: normalized RMS with a high-frequency emphasis
+ * - Beatgrid: spectral-flux onsets + harmonic-comb tempo (octave-safe) +
+ *   kick-band beat phase and downbeat (shared DSP, also usable server-side).
+ * - Loudness: integrated LUFS per EBU R128 — drives per-deck gain matching.
+ * - Key: chroma extraction (Goertzel) matched against Krumhansl profiles.
  */
 export async function analyzeBuffer(buffer: AudioBuffer): Promise<AnalysisResult> {
   const mono = toMono(buffer);
   const rate = buffer.sampleRate;
 
-  const bpm = detectBpm(mono, rate);
+  const beatgrid = detectBeatgrid(mono, rate);
   const key = detectKey(mono, rate);
-  const { energy, loudness } = measureEnergy(mono);
 
-  return { bpm, key, energy, loudness };
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) {
+    channels.push(buffer.getChannelData(c) as Float32Array);
+  }
+  const lufs = integratedLoudness(channels, rate);
+  const energy = energyFromLufs(lufs);
+
+  return {
+    bpm: Math.round(beatgrid.bpm),
+    key,
+    energy,
+    loudness: lufs, // kept for backwards compat with older sessions
+    lufs,
+    beatgrid,
+  };
 }
 
 function toMono(buffer: AudioBuffer): Float32Array {
@@ -32,39 +59,6 @@ function toMono(buffer: AudioBuffer): Float32Array {
     for (let i = 0; i < data.length; i++) out[i] += data[i] / chs;
   }
   return out;
-}
-
-function detectBpm(mono: Float32Array, rate: number): number {
-  const hop = 512;
-  const frames = Math.floor(mono.length / hop);
-  const envelope = new Float32Array(frames);
-  for (let f = 0; f < frames; f++) {
-    let sum = 0;
-    for (let i = f * hop; i < (f + 1) * hop; i++) sum += mono[i] * mono[i];
-    envelope[f] = Math.sqrt(sum / hop);
-  }
-  // Onset strength: positive first difference.
-  const onsets = new Float32Array(frames);
-  for (let f = 1; f < frames; f++) onsets[f] = Math.max(0, envelope[f] - envelope[f - 1]);
-
-  const frameRate = rate / hop;
-  let bestBpm = 120;
-  let bestScore = -Infinity;
-  for (let bpm = 70; bpm <= 180; bpm += 0.5) {
-    const lag = Math.round((60 / bpm) * frameRate);
-    if (lag < 4 || lag >= frames / 2) continue;
-    let score = 0;
-    // Comb over multiple periods for robustness.
-    for (let mult = 1; mult <= 4; mult++) {
-      const l = lag * mult;
-      for (let f = 0; f + l < frames; f += 3) score += onsets[f] * onsets[f + l] / mult;
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      bestBpm = bpm;
-    }
-  }
-  return Math.round(bestBpm);
 }
 
 /** Krumhansl-Schmuckler key profiles. */
@@ -110,30 +104,21 @@ function detectKey(mono: Float32Array, rate: number): CamelotKey {
 function goertzelPower(sig: Float32Array, rate: number, freq: number): number {
   const w = (2 * Math.PI * freq) / rate;
   const coeff = 2 * Math.cos(w);
-  let s0 = 0;
-  let s1 = 0;
-  let s2 = 0;
-  // Process in blocks to avoid numeric drift on long signals.
+  // Accumulate power over consecutive 2s blocks (resetting the resonator
+  // avoids numeric drift) so the WHOLE window contributes, not just the
+  // first block.
   const block = Math.min(sig.length, Math.floor(rate * 2));
-  for (let i = 0; i < block; i++) {
-    s0 = sig[i] + coeff * s1 - s2;
-    s2 = s1;
-    s1 = s0;
+  if (block === 0) return 0;
+  let power = 0;
+  for (let base = 0; base + block <= sig.length; base += block) {
+    let s1 = 0;
+    let s2 = 0;
+    for (let i = base; i < base + block; i++) {
+      const s0 = sig[i] + coeff * s1 - s2;
+      s2 = s1;
+      s1 = s0;
+    }
+    power += s1 * s1 + s2 * s2 - coeff * s1 * s2;
   }
-  return s1 * s1 + s2 * s2 - coeff * s1 * s2;
-}
-
-function measureEnergy(mono: Float32Array): { energy: number; loudness: number } {
-  let sum = 0;
-  const step = Math.max(1, Math.floor(mono.length / 500000));
-  let count = 0;
-  for (let i = 0; i < mono.length; i += step) {
-    sum += mono[i] * mono[i];
-    count++;
-  }
-  const rms = Math.sqrt(sum / count);
-  const loudness = 20 * Math.log10(Math.max(rms, 1e-6));
-  // Map typical music RMS (-30..-6 dBFS) onto 0..1.
-  const energy = Math.min(1, Math.max(0, (loudness + 30) / 24));
-  return { energy, loudness: Math.round(loudness * 10) / 10 };
+  return power;
 }

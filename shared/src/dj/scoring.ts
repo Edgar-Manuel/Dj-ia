@@ -1,3 +1,4 @@
+import { beatgridOf, nearestDownbeatTime, phraseFloorTime, secondsPerBeat } from '../audio/beatgrid.js';
 import { camelotCompatibility } from '../constants/camelot.js';
 import { PERSONALITY_MAP } from '../constants/personalities.js';
 import { TRANSITION_MAP, TRANSITIONS } from '../constants/transitions.js';
@@ -91,27 +92,36 @@ export function planTransition(
   const [minB, maxB] = def.beats;
   const [pMin, pMax] = personality.blendBeats;
   const beats = Math.round(clamp((minB + maxB) / 2, pMin, pMax));
-  const secPerBeat = 60 / current.bpm;
+
+  // Quantize the mix point to a phrase boundary of the outgoing track —
+  // human DJs mix in 4-bar phrases, never at an arbitrary second.
+  const grid = beatgridOf(current);
+  const spb = secondsPerBeat(grid);
+  const rawStart = current.duration - beats * spb;
+  const phraseStart = phraseFloorTime(grid, rawStart);
+  const mixStart = phraseStart > 0 && phraseStart >= current.duration * 0.4 ? phraseStart : rawStart;
 
   return {
     type: def.id,
     beats,
-    startBeforeEnd: beats * secPerBeat,
+    startBeforeEnd: current.duration - mixStart,
     incomingOffset: pickIncomingOffset(def.id, next),
     reason: buildReason(def.id, harmonic, energyDelta, current, next),
   };
 }
 
+/** Entry point in the incoming track, snapped to one of its downbeats. */
 function pickIncomingOffset(type: TransitionType, next: Track): number {
+  const grid = beatgridOf(next);
   if (type === 'drop-mix' || type === 'double-drop') {
     const drop = next.sections.find((s) => s.kind === 'drop');
-    if (drop) return Math.max(0, drop.start - (60 / next.bpm) * 4);
+    if (drop) return nearestDownbeatTime(grid, Math.max(0, drop.start - secondsPerBeat(grid) * 4));
   }
   if (type === 'quick-mix' || type === 'backspin') {
     const afterIntro = next.sections.find((s) => s.kind !== 'intro');
-    return afterIntro?.start ?? 0;
+    if (afterIntro) return nearestDownbeatTime(grid, afterIntro.start);
   }
-  return 0;
+  return nearestDownbeatTime(grid, 0);
 }
 
 function buildReason(
