@@ -6,3 +6,6 @@ export * from './constants/personalities.js';
 export * from './constants/modes.js';
 export * from './constants/transitions.js';
 export * from './dj/scoring.js';
+export * from './audio/beatgrid.js';
+export * from './audio/tempo.js';
+export * from './audio/loudness.js';

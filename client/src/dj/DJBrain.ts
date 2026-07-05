@@ -1,4 +1,7 @@
 import {
+  beatgridOf,
+  nextBeatTime,
+  nextDownbeatTime,
   planTransition,
   scoreCandidate,
   type DJSession,
@@ -6,6 +9,7 @@ import {
   type PlayedTrack,
   type Track,
   type TransitionPlan,
+  type TransitionType,
 } from '@ai-dj/shared';
 import { AudioEngine } from '@/audio/AudioEngine';
 import type { DeckId } from '@/audio/Deck';
@@ -269,6 +273,12 @@ class DJBrain {
     }
   }
 
+  /** Transitions whose musical effect depends on landing on a bar start. */
+  private static readonly BAR_ALIGNED: TransitionType[] = [
+    'beatmatch', 'eq-mix', 'smooth-blend', 'long-blend', 'loop-transition',
+    'filter-sweep', 'drop-mix', 'double-drop', 'quick-mix',
+  ];
+
   private fireTransition(plan: TransitionPlan): void {
     const store = useDJStore.getState();
     const next = store.nextUp;
@@ -277,7 +287,21 @@ class DJBrain {
     const from = store.activeDeck;
     const to = this.idleDeck();
 
-    const endsAt = this.engine.executeTransition(from, to, plan);
+    // Anchor the mix on the outgoing deck's grid: bar-aligned transitions
+    // wait for the next downbeat, FX-based ones for the next beat.
+    const outDeck = this.engine.deck(from);
+    let when = this.engine.ctx.currentTime + 0.03;
+    if (outDeck.track) {
+      const grid = beatgridOf(outDeck.track);
+      const pos = outDeck.position() + 0.06; // scheduling headroom
+      const target = DJBrain.BAR_ALIGNED.includes(plan.type)
+        ? nextDownbeatTime(grid, pos)
+        : nextBeatTime(grid, pos);
+      const wait = Math.min(target - outDeck.position(), (60 / grid.bpm) * 4) / outDeck.rateAt();
+      when = this.engine.ctx.currentTime + Math.max(0.03, wait);
+    }
+
+    const endsAt = this.engine.executeTransition(from, to, plan, when);
     this.transitionUntil = endsAt;
 
     this.recordPlay(next.track, plan);

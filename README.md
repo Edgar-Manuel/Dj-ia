@@ -13,7 +13,8 @@ Aplicación web completa donde una IA actúa como **DJ profesional autónomo**: 
 - **10 modos de sesión** (Fiesta, Bar, Discoteca, Relax, Trabajo, Gym, Viaje, After, Sunset, Amanecer) y **8 personalidades de DJ** (Comercial, Underground, Festival, Techno, House, Radio, Lounge, Experimental) que cambian riesgo, duración de blends y transiciones favoritas.
 - **28 géneros** — añadir uno nuevo = añadir una entrada en `shared/src/constants/genres.ts`.
 - **Biblioteca demo sintetizada**: ~170 pistas generadas proceduralmente por el navegador (kick, bajo, pads, arps según género/tonalidad/BPM), estructuradas en secciones (intro/build/drop/break/outro) que la IA usa para elegir puntos de mezcla.
-- **Subida de canciones** con análisis real en el navegador: BPM (autocorrelación de onsets), tonalidad Camelot (chroma + perfiles Krumhansl) y energía (RMS/loudness).
+- **Subida de canciones** con análisis real en el navegador: **beatgrid completo** (BPM fraccional por peine armónico sin errores de octava, fase del beat y downbeat sobre la banda del kick), tonalidad Camelot (chroma + perfiles Krumhansl) y **loudness integrado EBU R128 (LUFS)**.
+- **Mezcla cuantizada**: puntos de mezcla en frases de 4 compases, disparo exacto en el siguiente beat/downbeat del deck saliente, entrada del tema nuevo por un downbeat, sincronía de tempo (±8%) durante el blend con vuelta suave al tempo natural, y trim automático por deck hacia −14 LUFS. Tests del DSP en `shared/tests/` (`npm test -w @ai-dj/shared`).
 - **Visualizador 60 FPS**: espectro, partículas y luces sincronizadas con el beat.
 - **Sesiones**: guardar/cargar con historial completo.
 - **Arquitectura IA modular**: cerebro heurístico local (offline-first) + planificador **Claude** opcional en el backend (`ANTHROPIC_API_KEY`), con fallback automático.

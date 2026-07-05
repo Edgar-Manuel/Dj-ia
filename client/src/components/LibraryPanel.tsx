@@ -64,6 +64,8 @@ export function LibraryPanel() {
           key: analysis.key,
           energy: analysis.energy,
           loudness: analysis.loudness,
+          lufs: analysis.lufs,
+          beatgrid: analysis.beatgrid,
           duration: audioBuf.duration,
           sections: base.sections.length > 0 ? base.sections : defaultSections(audioBuf.duration),
         };
@@ -71,7 +73,8 @@ export function LibraryPanel() {
         if (serverTrack) {
           void api.patchTrack(serverTrack.id, {
             bpm: track.bpm, key: track.key, energy: track.energy,
-            loudness: track.loudness, duration: track.duration,
+            loudness: track.loudness, lufs: track.lufs, beatgrid: track.beatgrid,
+            duration: track.duration,
           });
         }
 

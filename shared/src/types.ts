@@ -17,6 +17,22 @@ export type Mood =
 
 export type SectionKind = 'intro' | 'build' | 'drop' | 'break' | 'outro';
 
+/**
+ * Precise tempo map of an audio file: where beats and downbeats fall.
+ * A scalar BPM is not enough to mix: aligning two decks needs the phase
+ * (first beat) and the bar anchor (first downbeat) of each track.
+ */
+export interface Beatgrid {
+  /** Fractional tempo in beats per minute (e.g. 173.9). */
+  bpm: number;
+  /** Seconds from the start of the file to the first beat. */
+  firstBeatOffset: number;
+  /** Seconds from the start of the file to the first downbeat (beat 1 of a bar). */
+  firstDownbeatOffset: number;
+  /** Beats per bar; 4 in every supported genre. */
+  beatsPerBar: number;
+}
+
 /** Musical section inside a track, used to pick mix points. */
 export interface TrackSection {
   kind: SectionKind;
@@ -49,6 +65,10 @@ export interface Track {
   seed: number;
   /** Integrated loudness estimate in dB relative to full scale (uploads). */
   loudness?: number;
+  /** Integrated loudness per EBU R128, in LUFS (uploads). */
+  lufs?: number;
+  /** Measured beatgrid (uploads); demo tracks derive an exact grid from bpm. */
+  beatgrid?: Beatgrid;
 }
 
 export type TransitionType =
