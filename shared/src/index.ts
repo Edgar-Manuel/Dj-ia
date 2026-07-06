@@ -9,3 +9,4 @@ export * from './dj/scoring.js';
 export * from './audio/beatgrid.js';
 export * from './audio/tempo.js';
 export * from './audio/loudness.js';
+export * from './dj/critique.js';

@@ -42,6 +42,8 @@ interface DJState {
   targetEnergy: number;
   transitioning: boolean;
   lastTransitionReason: string | null;
+  /** Notes from the mix self-critique for the last decision (empty = clean). */
+  lastCritique: string | null;
   serverEngine: string | null;
 
   set: (partial: Partial<DJState>) => void;
@@ -71,6 +73,7 @@ export const useDJStore = create<DJState>((setState) => ({
   targetEnergy: 0.5,
   transitioning: false,
   lastTransitionReason: null,
+  lastCritique: null,
   serverEngine: null,
 
   set: (partial) => setState(partial),

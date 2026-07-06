@@ -7,6 +7,7 @@ Aplicación web completa donde una IA actúa como **DJ profesional autónomo**: 
 ## ✨ Características
 
 - **Modo automático IA**: selección continua por mezcla armónica (rueda Camelot), distancia de BPM, trayectoria de energía, popularidad, mood y memoria del set (sin repetir temas ni abusar de artistas).
+- **Auto-crítica de mezcla** (bucle mide→critica→corrige): antes de cada mezcla, un crítico evalúa la decisión con datos objetivos — ventana de sync de BPM (rechaza saltos imposibles, admite medio/doble tiempo), choque de tonalidad Camelot (lo enmascara con FX o re-elige según el estilo del DJ), alineación de frase, salto de loudness residual tras el trim LUFS y salto de energía. Acepta, corrige o descarta y re-elige; la razón se muestra en la tarjeta «A continuación».
 - **Motor de audio real** (Web Audio API): dos decks con EQ de 3 bandas, filtros, delay con feedback, reverb por convolución, crossfader equal-power y limitador master.
 - **13 transiciones profesionales**: beatmatch, EQ mix, echo out, filter sweep, loop transition, reverb, delay throw, backspin, drop mix, smooth/long/quick blend y double drop — con automatización de parámetros sample-accurate.
 - **Narrativa de energía**: 9 estados (Muy relajado → Pico máximo → Final épico) gobernados por el arco del modo de sesión.

@@ -6,6 +6,7 @@ import { useDJStore } from '@/state/store';
 export function NextTrackCard() {
   const nextUp = useDJStore((s) => s.nextUp);
   const reason = useDJStore((s) => s.lastTransitionReason);
+  const critique = useDJStore((s) => s.lastCritique);
 
   return (
     <div className="flex flex-col gap-2 min-h-[7rem]">
@@ -59,6 +60,9 @@ export function NextTrackCard() {
 
       {reason && (
         <p className="text-[11px] leading-relaxed text-slate-500 italic px-1">🎧 {reason}</p>
+      )}
+      {critique && (
+        <p className="text-[11px] leading-relaxed text-amber-400/80 px-1">{critique}</p>
       )}
     </div>
   );

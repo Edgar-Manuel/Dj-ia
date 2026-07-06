@@ -1,10 +1,12 @@
 import {
   beatgridOf,
+  critiqueMix,
   nextBeatTime,
   nextDownbeatTime,
   planTransition,
   scoreCandidate,
   type DJSession,
+  type MixCritique,
   type PlanNextRequest,
   type PlayedTrack,
   type Track,
@@ -187,20 +189,52 @@ class DJBrain {
       recentTrackIds: this.memory.recentTrackIds(),
     };
 
+    const critiqueOpts = { personality: req.personality, targetEnergy: req.targetEnergy };
+    const setNote = (note: string) => useDJStore.setState({ lastCritique: note || null });
+
     if (store.useServerAI) {
       const remote = await api.planNext(req);
       if (remote) {
         const track = candidates.find((t) => t.id === remote.trackId);
-        if (track) return { track, transition: remote.transition, engine: remote.engine };
+        if (track) {
+          // The local critic vets even the server's pick; a rejection falls
+          // through to the offline brain rather than mixing something bad.
+          const critique = critiqueMix(current, track, remote.transition, critiqueOpts);
+          if (critique.verdict !== 'reject') {
+            setNote(summarizeCritique(critique));
+            return { track, transition: critique.transition, engine: remote.engine };
+          }
+        }
       }
     }
 
-    // Local brain: same scoring model, zero latency, works offline.
+    // Local brain: score, then measure → critique → correct. Walk the crate
+    // best-first and take the first candidate whose planned mix the critic
+    // doesn't reject, applying any correction it makes.
     const scored = req.candidates
       .map((t) => ({ t, s: scoreCandidate(t, req) }))
       .sort((a, b) => b.s.total - a.s.total);
-    const track = scored[0].t;
-    return { track, transition: planTransition(current, track, req), engine: 'local' };
+
+    let fallback: { track: Track; transition: TransitionPlan; note: string } | null = null;
+    for (const { t } of scored.slice(0, 8)) {
+      const plan = planTransition(current, t, req);
+      const critique = critiqueMix(current, t, plan, critiqueOpts);
+      const note = summarizeCritique(critique);
+      if (critique.verdict !== 'reject') {
+        setNote(note);
+        return { track: t, transition: critique.transition, engine: 'local' };
+      }
+      if (!fallback) fallback = { track: t, transition: plan, note };
+    }
+
+    // No candidate passed — use the best and flag why.
+    const fb = fallback ?? {
+      track: scored[0].t,
+      transition: planTransition(current, scored[0].t, req),
+      note: '',
+    };
+    setNote(fb.note || 'Ningún candidato encaja limpio; uso el mejor disponible.');
+    return { track: fb.track, transition: fb.transition, engine: 'local' };
   }
 
   private async planNext(): Promise<void> {
@@ -338,6 +372,13 @@ class DJBrain {
   private idleDeck(): DeckId {
     return useDJStore.getState().activeDeck === 'A' ? 'B' : 'A';
   }
+}
+
+/** One-line summary of a critique for the UI (empty when the mix is clean). */
+function summarizeCritique(critique: MixCritique): string {
+  if (critique.issues.length === 0) return '';
+  const prefix = critique.verdict === 'adjust' ? '🔧 Ajuste: ' : '⚠️ ';
+  return prefix + critique.issues.map((i) => i.detail).join(' · ');
 }
 
 export const djBrain = new DJBrain();
