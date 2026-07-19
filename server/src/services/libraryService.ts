@@ -10,6 +10,7 @@ import {
   type TrackSection,
 } from '@ai-dj/shared';
 import { JsonStore } from '../store/jsonStore.js';
+import { saveAudio } from './audioStorage.js';
 
 const store = new JsonStore<Track[]>(
   new URL('../../data/library.json', import.meta.url).pathname,
@@ -82,6 +83,56 @@ export async function ingestUpload(
   return track;
 }
 
+/** Deezer preview clips are a fixed ~30s regardless of the song's real length. */
+const PREVIEW_DURATION = 30;
+
+export interface ImportTrendInput {
+  title: string;
+  artist: string;
+  previewUrl: string;
+  /** Optional genre id hint (from the trending region's dominant style, if known). */
+  genre?: string;
+}
+
+/**
+ * Bring a real trending track into the library: download its Deezer preview
+ * (30s, legal — it's Deezer's own public playback stream) and register it as
+ * a `source: 'deezer'` Track. BPM/key/energy are genre-default estimates
+ * (there is no tag metadata on a raw preview stream); `separateTrack` in
+ * stemService.ts is the next step toward the real thing.
+ */
+export async function importFromDeezerPreview(input: ImportTrendInput): Promise<Track> {
+  const res = await fetch(input.previewUrl);
+  if (!res.ok) throw new Error(`could not download preview: ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+
+  const genre = input.genre && GENRE_MAP.has(input.genre) ? input.genre : 'pop';
+  const def = GENRE_MAP.get(genre)!;
+  const id = `dz_${nanoid(10)}`;
+  const audioUrl = await saveAudio(`${id}.mp3`, buffer);
+
+  const track: Track = {
+    id,
+    title: input.title,
+    artist: input.artist,
+    genre,
+    bpm: Math.round((def.bpmRange[0] + def.bpmRange[1]) / 2),
+    key: CAMELOT_KEYS[Math.floor(Math.random() * CAMELOT_KEYS.length)],
+    energy: (def.energyRange[0] + def.energyRange[1]) / 2,
+    duration: PREVIEW_DURATION,
+    popularity: 0.7,
+    mood: def.moods[0] as Mood,
+    year: new Date().getFullYear(),
+    source: 'deezer',
+    sections: defaultSections(PREVIEW_DURATION),
+    seed: Math.floor(Math.random() * 2 ** 31),
+    audioUrl,
+  };
+
+  await store.update((tracks) => [...tracks, track]);
+  return track;
+}
+
 /** Update analysis results computed by the client (real BPM/key/energy). */
 export async function patchTrack(id: string, patch: Partial<Track>): Promise<Track | null> {
   let updated: Track | null = null;
@@ -122,7 +173,7 @@ function normalizeKey(tag: string | undefined): CamelotKey | null {
   return null;
 }
 
-function defaultSections(duration: number): TrackSection[] {
+export function defaultSections(duration: number): TrackSection[] {
   const intro = Math.min(30, duration * 0.12);
   const outro = Math.min(30, duration * 0.12);
   const body = duration - intro - outro;

@@ -1,4 +1,4 @@
-import type { DJSession, PlanNextRequest, PlanNextResponse, Track, TrendProfile } from '@ai-dj/shared';
+import type { DJSession, PlanNextRequest, PlanNextResponse, Track, TrendProfile, TrendTrack } from '@ai-dj/shared';
 
 /**
  * Thin client for the AI DJ backend. Every call is failure-tolerant: the app
@@ -25,6 +25,14 @@ export const api = {
   aiStatus: () => request<{ engine: string }>('/ai/status'),
 
   getTrends: (region: string) => request<TrendProfile>(`/trends/${encodeURIComponent(region)}`),
+
+  importTrend: (trend: TrendTrack, genre?: string) =>
+    request<Track>('/library/import-trend', {
+      method: 'POST',
+      body: JSON.stringify({ title: trend.title, artist: trend.artist, previewUrl: trend.previewUrl, genre }),
+    }),
+
+  separateTrack: (id: string) => request<Track>(`/library/${id}/separate`, { method: 'POST' }),
 
   planNext: (body: PlanNextRequest) =>
     request<PlanNextResponse>('/ai/plan-next', { method: 'POST', body: JSON.stringify(body) }),

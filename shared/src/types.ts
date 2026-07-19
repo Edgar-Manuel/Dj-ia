@@ -60,7 +60,7 @@ export interface Track {
   popularity: number;
   mood: Mood;
   year: number;
-  source: 'demo' | 'upload';
+  source: 'demo' | 'upload' | 'deezer';
   sections: TrackSection[];
   /** Deterministic seed for procedural audio synthesis of demo tracks. */
   seed: number;
@@ -70,6 +70,10 @@ export interface Track {
   lufs?: number;
   /** Measured beatgrid (uploads); demo tracks derive an exact grid from bpm. */
   beatgrid?: Beatgrid;
+  /** Real audio (server-stored) for a `source: 'deezer'` track — a ~30s preview, not the full song. */
+  audioUrl?: string;
+  /** Separated stems (server-stored) for real audio, produced by the Demucs separator service. */
+  stems?: { vocals: string; instrumental: string };
 }
 
 export type TransitionType =

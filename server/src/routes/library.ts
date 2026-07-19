@@ -2,11 +2,13 @@ import { Router } from 'express';
 import multer from 'multer';
 import {
   ingestUpload,
+  importFromDeezerPreview,
   listTracks,
   patchTrack,
   removeTrack,
   smartPlaylist,
 } from '../services/libraryService.js';
+import { separateTrack } from '../services/stemService.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -26,6 +28,31 @@ libraryRouter.post('/upload', upload.single('file'), async (req, res) => {
   }
   const track = await ingestUpload(req.file.buffer, req.file.originalname, req.file.mimetype);
   res.status(201).json(track);
+});
+
+/** Bring a real trending track in (Deezer preview, 30s, legal to fetch/play). */
+libraryRouter.post('/import-trend', async (req, res) => {
+  const { title, artist, previewUrl, genre } = req.body ?? {};
+  if (typeof title !== 'string' || typeof artist !== 'string' || typeof previewUrl !== 'string') {
+    res.status(400).json({ error: 'title, artist and previewUrl are required' });
+    return;
+  }
+  try {
+    const track = await importFromDeezerPreview({ title, artist, previewUrl, genre });
+    res.status(201).json(track);
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'import failed' });
+  }
+});
+
+/** Separate a real track's audio into vocal/instrumental stems (Demucs sidecar; can take a couple minutes). */
+libraryRouter.post('/:id/separate', async (req, res) => {
+  try {
+    const track = await separateTrack(req.params.id);
+    res.json(track);
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'separation failed' });
+  }
 });
 
 libraryRouter.patch('/:id', async (req, res) => {

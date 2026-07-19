@@ -10,6 +10,7 @@ import { HistoryList } from './components/HistoryList';
 import { GenreSelector } from './components/GenreSelector';
 import { ModeSelector } from './components/ModeSelector';
 import { LibraryPanel } from './components/LibraryPanel';
+import { TrendsPanel } from './components/TrendsPanel';
 
 export default function App() {
   return (
@@ -42,7 +43,10 @@ export default function App() {
           <ModeSelector />
         </div>
         <HistoryList />
-        <LibraryPanel />
+        <div className="flex flex-col gap-4">
+          <LibraryPanel />
+          <TrendsPanel />
+        </div>
       </div>
 
       <footer className="text-center text-[10px] text-slate-600 py-2 font-mono">

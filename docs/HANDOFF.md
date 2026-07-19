@@ -191,6 +191,91 @@ válidos si en algún momento prefieres esas plataformas.
 
 ---
 
+## 2bis. Fase 4 — Audio real + "separar y reestructurar" (2026-07-19)
+
+Motivado por feedback directo probando la app: la biblioteca demo suena
+"sin alma" (100% sintetizada) y el trend boost de la Fase 3 nunca sonaba de
+verdad porque solo reordena esas 170 pistas falsas — nunca mete audio real.
+La idea: traer una canción real trending, separarla en voz/instrumental, y
+usar eso para remezclar (acapella sobre otro beat, etc.).
+
+**Lo que quedó construido:**
+- **Adquisición real** (`server/src/services/libraryService.ts` →
+  `importFromDeezerPreview`): descarga el preview de 30s de Deezer (stream
+  público, legal — no hace falta yt-dlp ni saltarse ningún ToS) y lo registra
+  como `Track` con `source: 'deezer'` y `audioUrl` apuntando al fichero
+  guardado en `server/data/audio/`. Nuevo endpoint `POST
+  /api/library/import-trend` (body: `{title, artist, previewUrl, genre?}`).
+- **Separación en stems** (`server/src/services/stemService.ts`): **no usa
+  Demucs/ML** — ver "por qué" abajo. Usa dos filtros de ffmpeg:
+  `instrumental` = cancelación de fase (`L-R`/`R-L`, cancela lo panneado al
+  centro) y `vocals` = canal mid pasado por band-pass 200Hz–4kHz (rango de
+  formantes vocales). Es una separación **aproximada**, no una IA de
+  verdad: funciona razonablemente si la voz está centrada y limpia; no
+  aísla batería/bajo y una voz no centrada se cuela en el instrumental.
+  Endpoint `POST /api/library/:id/separate` (unos segundos, no minutos).
+- **Reproducción de audio real** (`client/src/audio/AudioEngine.ts`):
+  `loadTrack()` ahora hace fetch+decode de `track.audioUrl` cuando
+  `source === 'deezer'` — una vez importada, la pista es una más en la
+  librería y el cerebro del DJ (heurístico o agente) puede elegirla sola.
+- **Capa de remix** (`AudioEngine.vocalLayer` +
+  `loadVocalLayer`/`playVocalLayer`/`stopVocalLayer`): una tercera fuente
+  de audio (no es un deck) que loopea un stem por encima de lo que ya está
+  sonando — la técnica "acapella sobre otro beat" del brainstorm §5.4.
+- **UI**: `client/src/components/TrendsPanel.tsx` — lista el top de la
+  región, botones Importar → Separar → ▶ Acapella por pista.
+
+### Por qué no hay separación con IA (Demucs) — el camino que se descartó
+
+Se intentó Demucs (real, con modelos pretrained) y **funciona perfecto en
+local** (validado con Docker: descarga preview real → separa → stems
+válidos de 30s, verificado con `ffmpeg -af volumedetect`). El problema es
+puramente de **cuota/memoria en producción**, no de código:
+
+1. El plan free de InsForge Compute limita a **1 servicio activo** por
+   proyecto → no se puede desplegar el separador como servicio aparte de
+   `dj-ia`. Solución intentada: fusionar Node+Python en un solo contenedor
+   (`docker/start.sh` corriendo ambos procesos) — funcionó en local.
+2. El plan free también limita **CPU a `shared-1x`** y **memoria a
+   512MB por servicio** — no negociable vía flags. Cargar el modelo
+   `htdemucs` (el más ligero de los pretrained, un solo modelo — los de la
+   familia `mdx_*` son "bags" de 4 modelos y pesan más) consume **491MB
+   solo para cargarlo**, medido con `resource.getrusage` dentro del
+   contenedor — sin margen para el propio proceso Python ni para Node
+   corriendo al lado. Reducir `--segment` (chunks más pequeños) no ayuda:
+   el coste es el runtime de PyTorch + los pesos, no el tamaño del audio
+   procesado por pasada.
+3. Se probó Hugging Face Spaces (CPU free tier, 16GB RAM — de sobra) como
+   alternativa gratuita fuera de InsForge. **También bloqueado**: los
+   Spaces con SDK Docker (o Gradio) requieren suscripción PRO en el tier
+   gratuito de cuenta free; solo los Spaces "Static" son gratis, y esos no
+   pueden correr un backend Python.
+4. Con eso, las opciones reales eran: pagar (InsForge más memoria, o HF
+   Pro ~$9/mes), o renunciar a la separación neuronal. Se eligió lo
+   segundo — de ahí el ffmpeg de arriba.
+
+**Si en algún momento hay presupuesto para esto**: el código de
+`separator/` (servicio FastAPI + Demucs, Dockerfile con torch CPU pineado,
+modelo `htdemucs` horneado en el build) se puede recuperar del historial de
+git (borrado en el commit de esta fase) — quedó completamente validado en
+local, solo falta un host con >512MB reales. `docs/BRAINSTORM_X10.md §5.4`
+tiene más contexto sobre por qué stems reales (no filtros DSP) desbloquean
+técnicas de mezcla "pro" de verdad.
+
+### Tests y estado (Fase 4)
+- Verificado en producción: import-trend → separate → stems servidos y
+  reproducibles, todo en `https://dj-ia-a09b61f4-035b-41bd-a53f-b67216d5d114.fly.dev`.
+- **No verificado**: la reproducción de audio real y la capa de acapella en
+  el navegador (`AudioEngine.loadTrack`/`loadVocalLayer`) — el pipeline de
+  servidor está probado end-to-end vía curl, pero no hay browser en este
+  entorno para probar la UI (`TrendsPanel`) interactivamente. Primera cosa
+  a probar en casa: abre la app, pestaña Tendencias, Importar → Separar →
+  ▶ Acapella, y confirma que se oye la voz loopeada sobre la mezcla activa.
+- `npm run typecheck`/`npm run build`/tests siguen verdes en los 3
+  workspaces (20 tests: 15 shared + 5 server).
+
+---
+
 ## 3. Restricción del entorno (importante — ya no aplica siempre)
 
 Las Fases 1-2 (2026-07-06) se hicieron en **Claude Code on the web**, cuyo

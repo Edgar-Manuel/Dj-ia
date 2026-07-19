@@ -14,10 +14,14 @@ export class AudioEngine {
   readonly deckA: Deck;
   readonly deckB: Deck;
   readonly masterAnalyser: AnalyserNode;
+  /** Third layer for remix techniques (e.g. an acapella stem looped over the mix) — not a deck. */
+  readonly vocalLayer: GainNode;
 
   /** Crossfader position: 0 = full A, 1 = full B. */
   private xfadePos = 0;
   private xfadeAnim: { from: number; to: number; start: number; dur: number } | null = null;
+  private vocalBuffer: AudioBuffer | null = null;
+  private vocalSource: AudioBufferSourceNode | null = null;
 
   constructor() {
     this.ctx = new AudioContext();
@@ -43,6 +47,10 @@ export class AudioEngine {
     reverb.connect(reverbReturn).connect(master);
     master.connect(limiter).connect(this.masterAnalyser).connect(this.ctx.destination);
 
+    this.vocalLayer = this.ctx.createGain();
+    this.vocalLayer.gain.value = 0;
+    this.vocalLayer.connect(master);
+
     this.deckA = new Deck('A', this.ctx, reverb, master);
     this.deckB = new Deck('B', this.ctx, reverb, master);
     this.applyCrossfade(0, 0);
@@ -64,12 +72,64 @@ export class AudioEngine {
     if (uploadBuffer) {
       audio = { kind: 'buffer', buffer: uploadBuffer };
       peaks = computeBufferPeaks(uploadBuffer, WAVEFORM_BINS);
+    } else if (track.source === 'deezer' && track.audioUrl) {
+      const buffer = await this.fetchAudioBuffer(track.audioUrl);
+      audio = { kind: 'buffer', buffer };
+      peaks = computeBufferPeaks(buffer, WAVEFORM_BINS);
     } else {
       const rendered = await renderTrack(track);
       audio = { kind: 'synth', rendered };
       peaks = computePeaks(rendered, WAVEFORM_BINS);
     }
     deck.load(track, audio, peaks);
+  }
+
+  private async fetchAudioBuffer(url: string): Promise<AudioBuffer> {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`could not fetch audio: ${url}`);
+    return this.ctx.decodeAudioData(await res.arrayBuffer());
+  }
+
+  /** Preload a stem (e.g. a vocal acapella) so playVocalLayer() can start it instantly. */
+  async loadVocalLayer(url: string): Promise<void> {
+    this.vocalBuffer = await this.fetchAudioBuffer(url);
+  }
+
+  /** Loop the preloaded stem over whatever is already playing — the "acapella over the mix" technique. */
+  playVocalLayer(gain = 0.9): void {
+    if (!this.vocalBuffer) return;
+    this.stopVocalLayer();
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.vocalBuffer;
+    src.loop = true;
+    src.connect(this.vocalLayer);
+    const now = this.ctx.currentTime;
+    this.vocalLayer.gain.cancelScheduledValues(now);
+    this.vocalLayer.gain.setTargetAtTime(gain, now, 0.08);
+    src.start();
+    this.vocalSource = src;
+  }
+
+  stopVocalLayer(): void {
+    const now = this.ctx.currentTime;
+    this.vocalLayer.gain.cancelScheduledValues(now);
+    this.vocalLayer.gain.setTargetAtTime(0, now, 0.08);
+    const src = this.vocalSource;
+    this.vocalSource = null;
+    if (src) {
+      setTimeout(() => {
+        try {
+          src.stop();
+        } catch {
+          /* already stopped */
+        }
+        src.disconnect();
+      }, 400);
+    }
+  }
+
+  get vocalLayerPlaying(): boolean {
+    return this.vocalSource !== null;
   }
 
   get crossfade(): number {

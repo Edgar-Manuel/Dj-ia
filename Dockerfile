@@ -2,7 +2,8 @@
 # API and the built client from one container — see server/src/app.ts).
 # Directory layout must survive into the runtime image: app.ts resolves the
 # client bundle as `server/dist/../../client/dist`, and the @ai-dj/shared
-# workspace is consumed via its npm-workspaces symlink.
+# workspace is consumed via its npm-workspaces symlink. ffmpeg is required
+# by stemService.ts (phase-cancellation vocal/instrumental split).
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -16,6 +17,7 @@ RUN npm run build
 
 FROM node:20-alpine AS runtime
 WORKDIR /app
+RUN apk add --no-cache ffmpeg
 ENV NODE_ENV=production
 COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/shared/package.json shared/package.json

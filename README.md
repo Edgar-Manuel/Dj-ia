@@ -19,6 +19,7 @@ Aplicación web completa donde una IA actúa como **DJ profesional autónomo**: 
 - **Visualizador 60 FPS**: espectro, partículas y luces sincronizadas con el beat.
 - **Sesiones**: guardar/cargar con historial completo.
 - **Tendencias por región**: `TrendsService` consulta los charts públicos de Deezer (sin auth, 22 regiones + fallback global) con caché TTL de 30 min; el artista que está sonando ahora en tu región recibe un boost en el scoring.
+- **Traer una canción real y remezclarla**: importa el preview de 30s (legal) de cualquier tema trending, sepáralo en voz/instrumental (filtros ffmpeg — cancelación de fase, no un modelo de IA; ver `docs/HANDOFF.md` "Fase 4" para el porqué) y loopea la voz sobre lo que ya está sonando. Panel «Tendencias» en la UI.
 - **Arquitectura IA modular**: cerebro heurístico local (offline-first, siempre disponible) + planificador **agente con tools** (Claude directo vía `ANTHROPIC_API_KEY`, u OpenRouter vía `OPENROUTER_API_KEY`), con fallback automático en cascada.
 
 ### 🤖 El planificador LLM es un agente, no una llamada única

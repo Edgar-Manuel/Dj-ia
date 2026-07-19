@@ -22,8 +22,12 @@ export function createApp() {
   app.use('/api/ai', aiRouter);
   app.use('/api/trends', trendsRouter);
 
-  // Serve the built client in production (single-process deployment).
+  // Real audio downloaded from Deezer previews + separated stems (see
+  // acquisitionService/stemService); demo tracks stay procedurally synthesized.
   const here = dirname(fileURLToPath(import.meta.url));
+  app.use('/api/audio', express.static(join(here, '../data/audio')));
+
+  // Serve the built client in production (single-process deployment).
   const clientDist = join(here, '../../client/dist');
   if (existsSync(clientDist)) {
     app.use(express.static(clientDist));
