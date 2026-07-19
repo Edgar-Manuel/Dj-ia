@@ -15,11 +15,17 @@ shared/   Dominio musical puro (sin I/O), isomorfo cliente/servidor:
           audio/tempo.ts (beatgrid: BPM fraccional + fase + downbeat),
           audio/loudness.ts (LUFS EBU R128 + trim), audio/beatgrid.ts.
           Tests en shared/tests/ → npm test -w @ai-dj/shared (15 verdes).
-server/   Express. Rutas: /api/library, /api/sessions, /api/ai/plan-next.
-          services/ai/ = planners conectables (DJPlanner): heurístico siempre;
-          ClaudePlanner si ANTHROPIC_API_KEY (claude-opus-4-8, JSON estructurado,
-          fallback automático). Persistencia: JSON (JsonStore) tras una interfaz
-          pensada para migrar a InsForge/Postgres sin tocar servicios.
+server/   Express. Rutas: /api/library, /api/sessions, /api/ai/plan-next,
+          /api/trends/:region.
+          services/ai/ = planners conectables (DJPlanner): heurístico siempre
+          disponible; ClaudePlanner (ANTHROPIC_API_KEY) y OpenRouterPlanner
+          (OPENROUTER_API_KEY) son agentes con tools (get_trends, get_library,
+          critique_mix, submit_plan) que comparten registro/prompt/loop en
+          tools.ts — fallback en cascada openrouter→claude→heurístico.
+          services/trends/ = TrendsService + DeezerTrendsProvider (charts
+          públicos sin auth, 22 regiones + fallback global, caché TTL 30 min).
+          Persistencia: JSON (JsonStore) tras una interfaz pensada para migrar
+          a InsForge/Postgres sin tocar servicios.
 client/   React 18 + Tailwind 3 + Framer Motion + Zustand + Web Audio.
   audio/  AudioEngine (2 decks, EQ 3 bandas, filtros, delay, reverb, crossfader
           equal-power, limitador; transiciones = automatización sample-accurate),
@@ -35,7 +41,8 @@ client/   React 18 + Tailwind 3 + Framer Motion + Zustand + Web Audio.
 ```bash
 npm install
 npm run build              # shared → server → client (server tiene prebuild)
-npm test -w @ai-dj/shared  # tests DSP + crítico
+npm test -w @ai-dj/shared  # tests DSP + crítico (15)
+npm test -w @ai-dj/server  # tests parser de tendencias Deezer (5)
 npm run dev:server         # API :4000
 npm run dev:client         # UI :5173 (proxy /api)
 npm start                  # producción: un proceso sirve API + client/dist
@@ -51,12 +58,18 @@ npm start                  # producción: un proceso sirve API + client/dist
 
 ## Estado y pendientes (resumen; detalle en docs/HANDOFF.md §4)
 
-Hecho y verificado: app completa con mezcla cuantizada a frases, beatgrid real, LUFS, tempo-sync y bucle de auto-crítica; 15 tests verdes; despliegue configurado (`vercel.json` cliente estático — Root Directory debe ser la raíz; `render.yaml` full-stack).
+Hecho y verificado: app completa con mezcla cuantizada a frases, beatgrid real, LUFS, tempo-sync y bucle de auto-crítica; 15+5 tests verdes; despliegue configurado (`vercel.json` cliente estático — Root Directory debe ser la raíz; `render.yaml` full-stack).
+
+También hecho (2026-07-19, con red abierta): **A y B del plan ×10** —
+tendencias por país (`TrendsService`/`DeezerTrendsProvider`, 22 regiones
+verificadas en vivo + fallback honesto, `trendBoost` cableado al scoring de
+`shared/`) y **agente con tools** (ClaudePlanner reescrito como loop de
+agente: `get_trends`/`get_library`/`critique_mix`/`submit_plan`, más
+OpenRouterPlanner como transporte alternativo — mismo agente, mismas tools,
+sin requerir `ANTHROPIC_API_KEY` directa). Detalle en `docs/HANDOFF.md` §2.
 
 Pendiente, por orden de impacto (cada bloque tiene prompt sugerido en el HANDOFF):
-- **A. Tendencias por país** (Deezer charts sin auth) → TrendsService + `/api/trends/:region` + boost en scoring. ⭐ Empezar aquí (requiere red abierta).
-- **B. Agente con tools**: convertir ClaudePlanner en loop de agente (tools: `critique_mix` ya existe, `get_trends`, `get_library`).
-- **C. Tool de adquisición** (yt-dlp/spotDL; ojo ToS — preferir previews legales/CC0).
+- **C. Tool de adquisición** (yt-dlp/spotDL; ojo ToS — preferir previews legales/CC0). ⭐ Empezar aquí.
 - **D. Generación controlada** (specs {bpm,key,estructura} → ACE-Step/InsForge; generar bridges/capas, no temas enteros).
 - **E. Migrar persistencia a InsForge** (JsonStore → Postgres + storage de audio). El MCP de InsForge está configurado en el entorno remoto; en local, instalarlo con `npx @insforge/install`.
 - **F. UX**: consola en vivo del agente, waveforms navegables con beatgrid, feedback 👍/👎.

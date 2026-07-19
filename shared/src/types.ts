@@ -1,4 +1,5 @@
 /** Core domain types shared between client and server. */
+import type { TrendProfile } from './trends/types.js';
 
 export type CamelotNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 export type CamelotLetter = 'A' | 'B';
@@ -172,6 +173,8 @@ export interface SelectionScore {
   freshness: number;
   popularity: number;
   moodFit: number;
+  /** 0..1 — how much the artist being regionally trending lifted this pick. */
+  trend: number;
 }
 
 /** Request/response contracts for the AI planning endpoint. */
@@ -184,12 +187,14 @@ export interface PlanNextRequest {
   mode: SessionModeId;
   recentArtists: string[];
   recentTrackIds: string[];
+  /** Optional regional chart snapshot (fetched via /api/trends/:region) to bias selection. */
+  trendProfile?: TrendProfile | null;
 }
 
 export interface PlanNextResponse {
   trackId: string;
   transition: TransitionPlan;
   scores: SelectionScore[];
-  /** Which engine produced the decision. */
-  engine: 'heuristic' | 'claude';
+  /** Which engine produced the decision. "claude" = direct Anthropic API, "openrouter" = same agent via OpenRouter. */
+  engine: 'heuristic' | 'claude' | 'openrouter';
 }

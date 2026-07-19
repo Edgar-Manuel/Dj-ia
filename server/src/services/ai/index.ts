@@ -1,13 +1,19 @@
 import type { PlanNextRequest, PlanNextResponse } from '@ai-dj/shared';
 import { HeuristicPlanner } from './heuristicPlanner.js';
 import { ClaudePlanner } from './claudePlanner.js';
+import { OpenRouterPlanner } from './openRouterPlanner.js';
 import type { DJPlanner } from './types.js';
 
 const heuristic = new HeuristicPlanner();
 const claude = new ClaudePlanner();
+const openRouter = new OpenRouterPlanner();
 
-/** Registry ordered by preference; first available planner wins. */
-const planners: DJPlanner[] = [claude, heuristic];
+/**
+ * Registry ordered by preference; first available planner wins. OpenRouter
+ * comes first so a deployment with OPENROUTER_API_KEY (no direct Anthropic
+ * key required) still gets the full tool-using agent, not just heuristics.
+ */
+const planners: DJPlanner[] = [openRouter, claude, heuristic];
 
 export function activePlanner(): DJPlanner {
   return planners.find((p) => p.isAvailable()) ?? heuristic;
@@ -25,4 +31,4 @@ export async function planNext(req: PlanNextRequest): Promise<PlanNextResponse> 
   }
 }
 
-export { HeuristicPlanner, ClaudePlanner };
+export { HeuristicPlanner, ClaudePlanner, OpenRouterPlanner };

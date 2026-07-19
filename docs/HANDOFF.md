@@ -1,8 +1,8 @@
 # 🛠️ Handoff — dónde está el proyecto y cómo seguir
 
 > Documento para retomar el trabajo en casa (portátil + Claude Code en terminal).
-> Fecha: 2026-07-06. Rama de trabajo: **`claude/insforge-music-generation-p3m1tw`**
-> (repo `Edgar-Manuel/Dj-ia`). Todo lo descrito aquí está **commiteado y pusheado**.
+> Fecha: 2026-07-06, actualizado 2026-07-19. Rama de trabajo:
+> **`claude/ai-dj-web-app-76mrzo`** (repo `Edgar-Manuel/Dj-ia`).
 
 ---
 
@@ -40,7 +40,7 @@ tendencias por país. Este handoff cubre lo ya hecho de ese plan.
 
 ---
 
-## 2. Lo que YA está hecho (Fases 1 y 2)
+## 2. Lo que YA está hecho (Fases 1, 2 y 3)
 
 ### Fase 1 — Motor de audio real (commit `7b6aa30`)
 Arregla directamente "no lleva bien los tempos ni las mezclas".
@@ -85,51 +85,97 @@ El núcleo "mide → critica → corrige" del brainstorm, **100% local**.
   servidor/Claude** (un `reject` cae al cerebro local). La nota se expone en el
   store (`lastCritique`) y se muestra en `NextTrackCard`.
 
+### Fase 3 — Tendencias por país + agente con tools (2026-07-19, con red abierta)
+Bloques **A y B** del plan ×10 (`docs/BRAINSTORM_X10.md §2/§4`), hechos y
+**verificados en vivo** contra la API pública de Deezer y el catálogo de
+OpenRouter (esta sesión sí tuvo red abierta — ver nota actualizada en §3).
+
+- **`shared/src/trends/{types,boost}.ts`** — `TrendProfile`/`TrendTrack` y
+  `trendBoost(track, profile)`: 0..1 según si el artista está trending
+  (match tolerante a acentos/mayúsculas/substring), ponderado por posición
+  en el chart. Cableado en `shared/src/dj/scoring.ts` con el mismo peso de
+  personalidad que la popularidad (`trend * personality.popularityWeight *
+  0.08`) — un DJ comercial/radio persigue tendencias, uno underground/techno
+  casi las ignora. `PlanNextRequest.trendProfile` es opcional; sin él, boost
+  = 0 (no rompe nada existente).
+- **`server/src/services/trends/`** — `regions.ts` (22 regiones: playlists
+  editoriales "Top &lt;País&gt;" de Deezer, resueltas a mano vía
+  `/search/playlist?q=Top+<País>` porque la API pública no tiene chart
+  parametrizado por país; `global` usa `/chart/0/tracks` nativo),
+  `deezerProvider.ts` (fetch + `parseDeezerTracks` puro, testeado con
+  fixtures reales en `server/tests/fixtures/`), `trendsService.ts` (caché
+  TTL 30 min en memoria, fallback honesto — sirve el último dato válido o un
+  perfil vacío `source: "fallback"`, nunca inventa). Ruta `GET
+  /api/trends/:region` (+ `/api/trends/regions`) en `server/src/routes/trends.ts`.
+- **`server/src/services/ai/tools.ts`** — registro de tools compartido por
+  cualquier planner-agente: `get_trends`, `get_library` (busca en toda la
+  biblioteca, no solo el shortlist), `critique_mix` (reusa la auto-crítica
+  de la Fase 2 sobre la pista que el LLM proponga) y la tool terminal
+  `submit_plan`. También el prompt de sistema y el builder del turno inicial,
+  para que todos los planners-agente compartan comportamiento.
+- **`server/src/services/ai/claudePlanner.ts`** — reescrito de una llamada
+  JSON de un solo turno a un **loop de agente** (hasta 6 turnos; el último
+  fuerza `tool_choice: submit_plan` para garantizar terminación): el modelo
+  llama tools, ve los resultados, y el prompt de sistema le exige haber
+  llamado `critique_mix` con veredicto ≠ `reject` antes de poder terminar.
+- **`server/src/services/ai/openRouterPlanner.ts`** *(nuevo)* — el mismo
+  agente y las mismas tools, pero hablando con
+  `https://openrouter.ai/api/v1/chat/completions` (formato OpenAI de tool
+  calling) en vez de la API de Anthropic directa. Se activa con
+  `OPENROUTER_API_KEY`; modelo por defecto `anthropic/claude-opus-4.8`
+  (`AI_DJ_OPENROUTER_MODEL` para cambiarlo — verificar el slug exacto en
+  `https://openrouter.ai/api/v1/models`, el catálogo cambia). Útil para
+  correr el planificador LLM sin una key directa de Anthropic.
+- **`server/src/services/ai/index.ts`** — orden de fallback:
+  **openrouter → claude → heurístico**; el primero disponible (`isAvailable()`)
+  gana, y cualquier error del agente (turnos agotados, red, JSON inválido)
+  cae al siguiente.
+- **Cliente**: `api.getTrends(region)`, `store.trendRegion`/`trendProfile`
+  (`DJState`), y `DJBrain.ensureTrendProfile()` — refresca el perfil (TTL
+  10 min en cliente, encima del TTL de 30 min del server) antes de cada
+  `decide()` y lo mete en `PlanNextRequest.trendProfile`. **Pendiente**: no
+  hay selector de región en la UI — usa el default `'global'` hasta que se
+  aborde el bloque F (explorador de tendencias).
+
 ### Tests y estado
 - `shared/tests/dsp.test.mjs` + `shared/tests/critique.test.mjs` → **15 tests,
   todos verdes** (`npm test -w @ai-dj/shared`).
+- `server/tests/trends.test.mjs` (parser de Deezer contra fixtures reales) →
+  **5 tests, todos verdes** (`npm test -w @ai-dj/server`).
 - `npm run typecheck` y `npm run build` verdes en los 3 workspaces.
+- **No verificado en este entorno**: el loop de agente de `claudePlanner.ts`/
+  `openRouterPlanner.ts` en vivo — ni `ANTHROPIC_API_KEY` ni
+  `OPENROUTER_API_KEY` estaban disponibles en esta sesión. La ruta de
+  fallback a heurístico sí está verificada (es la que se usa por defecto sin
+  key). Primera cosa a probar en casa con tus keys: arranca el server con
+  una de las dos y pide un `plan-next` con un `current` track — deberías ver
+  en los logs las llamadas a `get_trends`/`get_library`/`critique_mix` antes
+  del resultado final.
 
 ---
 
-## 3. Restricción del entorno (importante)
+## 3. Restricción del entorno (importante — ya no aplica siempre)
 
-Este trabajo se hizo en **Claude Code on the web**, cuyo entorno tiene una
-**política de red que bloquea las APIs externas** (Deezer, YouTube, etc. dan
-`403` en el proxy; solo hay salida a npm/pypi/github/anthropic). Por eso **todo
-lo hecho es local y testeable sin red**, y las partes que dependen de servicios
-externos quedaron pendientes a propósito: en tu portátil, con red abierta y
-claves, sí se pueden construir y probar.
+Las Fases 1-2 (2026-07-06) se hicieron en **Claude Code on the web**, cuyo
+entorno tenía una **política de red que bloqueaba las APIs externas** (Deezer,
+YouTube, etc. daban `403` en el proxy; solo había salida a npm/pypi/github/
+anthropic). Por eso quedó todo local y testeable sin red, y lo que dependía de
+servicios externos se dejó pendiente a propósito.
+
+La Fase 3 (2026-07-19) sí corrió con **red abierta** (entorno local en
+Windows) y verificó Deezer y el catálogo de OpenRouter en vivo — ver §2. Lo
+que sigue pendiente (`ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY` en vivo, C/D/E)
+no es por restricción de red sino porque falta la key o es la siguiente tarea
+a abordar.
 
 ---
 
 ## 4. Por dónde continuar (siguiente sesión con Claude Code)
 
-Orden sugerido por impacto/dependencias. Cada bloque es una tarea que puedes
-pedirle a Claude Code directamente.
+Orden sugerido por impacto/dependencias. **A y B ya están hechos** (§2, Fase
+3) — arranca por C.
 
-### A) Tendencias por país — el "oído" del agente  ⭐ empezar por aquí
-El chart de Deezer no necesita auth y da top por país (artista/título/preview).
-> Prompt sugerido: *"Implementa un TrendsService en el server con un proveedor
-> Deezer (charts por país, sin auth) + caché TTL + fallback honesto cuando no
-> haya red, expuesto en `/api/trends/:region`. Añade el parser con tests de
-> fixtures. Cablea un `TrendProfile` opcional al scoring para dar boost a las
-> pistas subidas cuyo artista esté trending. En casa hay red, así que verifica
-> el fetch en vivo."*
-- Nota: Deezer **no** da BPM/key, así que el valor real de las tendencias es
-  alimentar la generación (D) y las descargas (C), no tanto la selección.
-- Ficheros nuevos previstos: `server/src/services/trends/{provider,deezerProvider,trendsService}.ts`,
-  ruta en `server/src/routes/`, tipos + `trendBoost` en `shared/src/trends/`.
-
-### B) Framework de tools del agente + tool-calling
-Convertir `server/src/services/ai/claudePlanner.ts` en un agente con
-herramientas (registro de tools tipadas). La **primera tool es la crítica que ya
-existe** (`critiqueMix`), más `get_trends` (de A). Requiere `ANTHROPIC_API_KEY`.
-> Prompt: *"Monta un registro de tools en el server y haz que el ClaudePlanner
-> llame herramientas: `critique_mix` (ya implementada en shared), `get_trends`,
-> `get_library`. Loop de agente que planifica → critica con la tool → corrige."*
-
-### C) Descargas (yt-dlp / spotDL) — tool de adquisición
+### C) Descargas (yt-dlp / spotDL) — tool de adquisición  ⭐ empezar por aquí
 > Prompt: *"Añade una tool `download_track(url|query)` que use yt-dlp/spotDL en
 > un worker del server, guarda el audio y lo pasa por `analyzeBuffer` para
 > rellenar beatgrid+lufs, y lo mete en la biblioteca."*
@@ -162,17 +208,23 @@ shared/src/
   audio/loudness.ts     # LUFS EBU R128 + trim gain
   audio/beatgrid.ts     # tipo Beatgrid + cuantización a beat/downbeat/frase
   dj/critique.ts        # ⭐ auto-crítica de mezcla (accept/adjust/reject)
-  dj/scoring.ts         # scoring + planTransition (cuantizado a frases)
-  types.ts              # Track (con beatgrid, lufs), TransitionPlan, etc.
+  dj/scoring.ts         # scoring + planTransition (cuantizado a frases; incluye trendBoost)
+  trends/{types,boost}.ts  # TrendProfile/TrendTrack + trendBoost()
+  types.ts              # Track (con beatgrid, lufs), TransitionPlan, PlanNextRequest.trendProfile, etc.
 server/src/
-  services/ai/          # DJPlanner: heuristicPlanner + claudePlanner  ← extender a agente (§4B)
+  services/ai/tools.ts          # ⭐ registro de tools + prompt de sistema, compartido por todo planner-agente
+  services/ai/claudePlanner.ts  # agente vía Anthropic directo (ANTHROPIC_API_KEY)
+  services/ai/openRouterPlanner.ts  # mismo agente vía OpenRouter (OPENROUTER_API_KEY)
+  services/ai/index.ts          # fallback en cascada: openrouter → claude → heuristicPlanner
+  services/trends/               # TrendsService + DeezerTrendsProvider + regions.ts
   store/jsonStore.ts    # persistencia (interfaz lista para InsForge, §4E)
-  routes/               # library, sessions, ai  ← añadir trends (§4A)
+  routes/               # library, sessions, ai, trends
 client/src/
+  lib/api.ts             # getTrends(region) además de planNext/library/sessions
   audio/analysis.ts     # análisis de subidas (usa el DSP de shared)
   audio/Deck.ts         # deck: trim LUFS + sync de tempo + fase
   audio/AudioEngine.ts  # consola de mezcla: executeTransition(when)
-  dj/DJBrain.ts         # ⭐ bucle decide() con crítica
+  dj/DJBrain.ts         # ⭐ bucle decide() con crítica; ensureTrendProfile() antes de cada decisión
   components/NextTrackCard.tsx  # muestra la nota de crítica
 docs/
   BRAINSTORM_X10.md     # el plan completo x10 (visión, repos útiles, roadmap)

@@ -4,6 +4,7 @@ build/
 *.log
 .env
 .env.local
+.mcp.json
 .DS_Store
 server/data/*.json
 !server/data/.gitkeep

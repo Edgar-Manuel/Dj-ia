@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { libraryRouter } from './routes/library.js';
 import { sessionsRouter } from './routes/sessions.js';
 import { aiRouter } from './routes/ai.js';
+import { trendsRouter } from './routes/trends.js';
 
 export function createApp() {
   const app = express();
@@ -19,6 +20,7 @@ export function createApp() {
   app.use('/api/library', libraryRouter);
   app.use('/api/sessions', sessionsRouter);
   app.use('/api/ai', aiRouter);
+  app.use('/api/trends', trendsRouter);
 
   // Serve the built client in production (single-process deployment).
   const here = dirname(fileURLToPath(import.meta.url));

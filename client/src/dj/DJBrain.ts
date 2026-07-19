@@ -167,9 +167,25 @@ class DJBrain {
 
   // ── Decision making ───────────────────────────────────────────────────
 
+  private lastTrendFetch = 0;
+  private static readonly TREND_TTL_MS = 10 * 60 * 1000;
+
+  /** Keep the store's trend snapshot fresh (client-side TTL on top of the server's own cache). */
+  private async ensureTrendProfile(): Promise<void> {
+    const store = useDJStore.getState();
+    const stale = Date.now() - this.lastTrendFetch > DJBrain.TREND_TTL_MS;
+    if (store.trendProfile?.region === store.trendRegion && !stale) return;
+    const profile = await api.getTrends(store.trendRegion);
+    if (profile) {
+      this.lastTrendFetch = Date.now();
+      useDJStore.setState({ trendProfile: profile });
+    }
+  }
+
   private async decide(
     current: Track | null,
-  ): Promise<{ track: Track; transition: TransitionPlan; engine: 'heuristic' | 'claude' | 'local' } | null> {
+  ): Promise<{ track: Track; transition: TransitionPlan; engine: 'heuristic' | 'claude' | 'openrouter' | 'local' } | null> {
+    await this.ensureTrendProfile();
     const store = useDJStore.getState();
     const candidates = this.memory.candidates(store.library, store.genres);
     if (candidates.length === 0) return null;
@@ -187,6 +203,7 @@ class DJBrain {
       mode: store.mode,
       recentArtists: this.memory.recentArtists(),
       recentTrackIds: this.memory.recentTrackIds(),
+      trendProfile: store.trendProfile,
     };
 
     const critiqueOpts = { personality: req.personality, targetEnergy: req.targetEnergy };

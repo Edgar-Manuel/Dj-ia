@@ -10,3 +10,5 @@ export * from './audio/beatgrid.js';
 export * from './audio/tempo.js';
 export * from './audio/loudness.js';
 export * from './dj/critique.js';
+export * from './trends/types.js';
+export * from './trends/boost.js';

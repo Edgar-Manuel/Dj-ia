@@ -6,13 +6,14 @@ import type {
   SessionModeId,
   Track,
   TransitionPlan,
+  TrendProfile,
 } from '@ai-dj/shared';
 import type { DeckId } from '@/audio/Deck';
 
 export interface NextUp {
   track: Track;
   transition: TransitionPlan;
-  engine: 'heuristic' | 'claude' | 'local';
+  engine: 'heuristic' | 'claude' | 'openrouter' | 'local';
   ready: boolean;
 }
 
@@ -31,6 +32,10 @@ interface DJState {
   energyBias: number;
   autoMode: boolean;
   useServerAI: boolean;
+  /** Region code for /api/trends (ISO-3166 alpha-2 lowercase, or "global"). */
+  trendRegion: string;
+  /** Last fetched regional chart snapshot, fed into scoring as a trend boost. */
+  trendProfile: TrendProfile | null;
 
   // Live set state
   status: 'idle' | 'playing' | 'paused';
@@ -63,6 +68,8 @@ export const useDJStore = create<DJState>((setState) => ({
   energyBias: 0,
   autoMode: true,
   useServerAI: true,
+  trendRegion: 'global',
+  trendProfile: null,
 
   status: 'idle',
   activeDeck: 'A',

@@ -18,15 +18,28 @@ Aplicación web completa donde una IA actúa como **DJ profesional autónomo**: 
 - **Mezcla cuantizada**: puntos de mezcla en frases de 4 compases, disparo exacto en el siguiente beat/downbeat del deck saliente, entrada del tema nuevo por un downbeat, sincronía de tempo (±8%) durante el blend con vuelta suave al tempo natural, y trim automático por deck hacia −14 LUFS. Tests del DSP en `shared/tests/` (`npm test -w @ai-dj/shared`).
 - **Visualizador 60 FPS**: espectro, partículas y luces sincronizadas con el beat.
 - **Sesiones**: guardar/cargar con historial completo.
-- **Arquitectura IA modular**: cerebro heurístico local (offline-first) + planificador **Claude** opcional en el backend (`ANTHROPIC_API_KEY`), con fallback automático.
+- **Tendencias por región**: `TrendsService` consulta los charts públicos de Deezer (sin auth, 22 regiones + fallback global) con caché TTL de 30 min; el artista que está sonando ahora en tu región recibe un boost en el scoring.
+- **Arquitectura IA modular**: cerebro heurístico local (offline-first, siempre disponible) + planificador **agente con tools** (Claude directo vía `ANTHROPIC_API_KEY`, u OpenRouter vía `OPENROUTER_API_KEY`), con fallback automático en cascada.
+
+### 🤖 El planificador LLM es un agente, no una llamada única
+
+Cuando hay una API key configurada, el planificador no se limita a devolver un JSON: **razona con herramientas** antes de decidir —
+
+- `get_trends(region)` — consulta el chart real de la región antes de asumir qué está sonando.
+- `get_library(genre?, minBpm?, maxBpm?)` — busca en toda la biblioteca, no solo en el shortlist inicial.
+- `critique_mix(trackId, transitionType?, beats?)` — la misma auto-crítica objetiva del bucle local (tempo/armonía/frase/loudness/energía); el agente **debe** validar su elección aquí antes de responder, y si el veredicto es `reject`, prueba otra pista.
+- `submit_plan(...)` — la acción final que cierra el turno.
+
+Si el agente se queda sin turnos, responde sin herramientas, o falla por red, el sistema cae al siguiente planificador de la cadena (OpenRouter → Claude directo → heurístico local) sin intervención del usuario.
 
 ## 🏗️ Arquitectura
 
 ```
 ai-dj/
 ├── shared/   # Tipos + dominio musical (Camelot, géneros, energía, scoring) — usado por cliente y servidor
-├── server/   # Express + TypeScript: biblioteca, sesiones, endpoint IA /api/ai/plan-next
-│   └── services/ai/   # DJPlanner: HeuristicPlanner + ClaudePlanner (conectable a otros modelos)
+├── server/   # Express + TypeScript: biblioteca, sesiones, tendencias, endpoint IA /api/ai/plan-next
+│   ├── services/ai/      # DJPlanner: Heuristic + Claude + OpenRouter (agentes con tools compartidas)
+│   └── services/trends/  # TrendsService + DeezerTrendsProvider (charts por región, caché TTL)
 └── client/   # React + TypeScript + Tailwind + Framer Motion + Web Audio
     ├── audio/  # AudioEngine, Deck, sintetizador procedural, análisis BPM/key
     ├── dj/     # DJBrain, EnergyNarrative, SetMemory
@@ -47,21 +60,29 @@ npm run dev:client     # UI en http://localhost:5173 (proxy /api → 4000)
 npm start
 ```
 
-### Activar el planificador Claude (opcional)
+### Activar el planificador LLM (opcional)
+
+Elige uno (si configuras ambos, se prueba OpenRouter primero):
 
 ```bash
+# Opción A: OpenRouter (cualquier cuenta, sin API key directa de Anthropic)
+export OPENROUTER_API_KEY=sk-or-...
+# opcional: export AI_DJ_OPENROUTER_MODEL=anthropic/claude-opus-4.8
+
+# Opción B: Anthropic directo
 export ANTHROPIC_API_KEY=sk-ant-...
 # opcional: export AI_DJ_CLAUDE_MODEL=claude-opus-4-8
+
 npm run dev:server
 ```
 
-Sin API key, el sistema usa el cerebro heurístico (misma lógica de scoring, cero latencia). El botón «IA» de la cabecera muestra el motor activo.
+Sin ninguna API key, el sistema usa el cerebro heurístico (misma lógica de scoring, cero latencia). El botón «IA» de la cabecera muestra el motor activo (`heuristic` / `claude` / `openrouter`).
 
 ## 🧠 Cómo piensa el DJ
 
 1. **Candidatos**: la memoria del set filtra la biblioteca (géneros activos, sin repetidos, artistas recientes penalizados).
 2. **Objetivo de energía**: `EnergyNarrative` combina el arco del modo (p. ej. Discoteca: calentamiento → pico → aterrizaje), el estado narrativo actual y el bias manual.
-3. **Scoring** (compartido cliente/servidor): armonía Camelot 24% · tempo 22% · ajuste de energía 24% · frescura 12% · género 6% · popularidad×personalidad 7% · mood 5% + caos controlado según el riesgo de la personalidad.
+3. **Scoring** (compartido cliente/servidor): armonía Camelot 24% · tempo 22% · ajuste de energía 24% · frescura 12% · género 6% · popularidad×personalidad 7% · mood 5% · tendencia regional×personalidad 8% + caos controlado según el riesgo de la personalidad.
 4. **Transición**: se elige entre las 13 según compatibilidad armónica mínima, delta de energía y preferencias de la personalidad; el plan (tipo, beats, punto de entrada, razonamiento) se ejecuta como automatización de audio.
 5. **Preparación**: el siguiente tema se renderiza/carga en el deck libre con antelación; la transición se dispara automáticamente en la ventana planificada.
 
@@ -72,6 +93,8 @@ Sin API key, el sistema usa el cerebro heurístico (misma lógica de scoring, ce
 | GET | `/api/health` | Estado del servidor |
 | GET | `/api/ai/status` | Motor de IA activo |
 | POST | `/api/ai/plan-next` | Decide siguiente tema + transición |
+| GET | `/api/trends/regions` | Regiones con chart dedicado |
+| GET | `/api/trends/:region` | Top trending de una región (Deezer, `?refresh=1` fuerza refetch) |
 | GET | `/api/library` | Lista de pistas |
 | POST | `/api/library/upload` | Subir audio (multipart `file`) |
 | PATCH | `/api/library/:id` | Actualizar análisis de una pista |
@@ -83,4 +106,6 @@ Sin API key, el sistema usa el cerebro heurístico (misma lógica de scoring, ce
 
 - **Nuevo género**: una entrada en `shared/src/constants/genres.ts` (rango de BPM/energía, moods, color, sabor de síntesis).
 - **Nueva transición**: definición en `shared/src/constants/transitions.ts` + su automatización en `client/src/audio/AudioEngine.ts`.
-- **Nuevo motor de IA**: implementa `DJPlanner` en `server/src/services/ai/` y regístralo en el array de `index.ts` (OpenAI, modelos locales, etc.).
+- **Nuevo motor de IA**: implementa `DJPlanner` en `server/src/services/ai/` y regístralo en el array de `index.ts`. Reutiliza `AGENT_TOOLS`/`buildAgentPrompt`/`finalizePlan` de `tools.ts` para heredar el bucle de agente y las herramientas gratis (ver `openRouterPlanner.ts` como ejemplo de un segundo transporte para el mismo agente).
+- **Nueva tool del agente**: añádela a `AGENT_TOOLS` en `server/src/services/ai/tools.ts` — la recogen automáticamente todos los planificadores basados en agente.
+- **Nueva región de tendencias**: añade su playlist "Top &lt;País&gt;" de Deezer a `REGION_PLAYLISTS` en `server/src/services/trends/regions.ts` (búscala con `/search/playlist?q=Top+<País>`).

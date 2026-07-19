@@ -2,6 +2,7 @@ import { beatgridOf, nearestDownbeatTime, phraseFloorTime, secondsPerBeat } from
 import { camelotCompatibility } from '../constants/camelot.js';
 import { PERSONALITY_MAP } from '../constants/personalities.js';
 import { TRANSITION_MAP, TRANSITIONS } from '../constants/transitions.js';
+import { trendBoost } from '../trends/boost.js';
 import type {
   PlanNextRequest,
   SelectionScore,
@@ -41,6 +42,10 @@ export function scoreCandidate(track: Track, req: PlanNextRequest): SelectionSco
 
   const popularity = track.popularity;
   const moodFit = current && track.mood === current.mood ? 1 : 0.65;
+  // Regional charts are another signal of crowd appeal, so it shares the
+  // same personality knob as popularity (a radio DJ chases trends; an
+  // underground one mostly ignores them).
+  const trend = trendBoost(track, req.trendProfile);
 
   const total =
     harmonic * 0.24 +
@@ -50,10 +55,11 @@ export function scoreCandidate(track: Track, req: PlanNextRequest): SelectionSco
     freshness * 0.12 +
     popularity * personality.popularityWeight * 0.07 +
     moodFit * 0.05 +
+    trend * personality.popularityWeight * 0.08 +
     // A pinch of controlled chaos so the set never becomes predictable.
     Math.random() * 0.05 * (0.5 + personality.risk);
 
-  return { trackId: track.id, total, harmonic, tempo, energyFit, genreFit, freshness, popularity, moodFit };
+  return { trackId: track.id, total, harmonic, tempo, energyFit, genreFit, freshness, popularity, moodFit, trend };
 }
 
 export function planTransition(

@@ -7,35 +7,29 @@ import {
 } from '@ai-dj/shared';
 import type { DJPlanner } from './types.js';
 import { planTransition, scoreCandidate } from './heuristicPlanner.js';
+import {
+  AGENT_SYSTEM_PROMPT,
+  AGENT_TOOLS,
+  AGENT_TOOL_MAP,
+  SUBMIT_PLAN_TOOL,
+  buildAgentPrompt,
+  type SubmitPlanInput,
+  type ToolContext,
+} from './tools.js';
 
 const MODEL = process.env.AI_DJ_CLAUDE_MODEL ?? 'claude-opus-4-8';
-
-interface ClaudePlan {
-  trackId: string;
-  transitionType: string;
-  beats: number;
-  reason: string;
-}
-
-const PLAN_SCHEMA = {
-  type: 'object',
-  properties: {
-    trackId: { type: 'string' },
-    transitionType: {
-      type: 'string',
-      enum: [...TRANSITION_MAP.keys()],
-    },
-    beats: { type: 'integer' },
-    reason: { type: 'string' },
-  },
-  required: ['trackId', 'transitionType', 'beats', 'reason'],
-  additionalProperties: false,
-} as const;
+/** Safety net: forces a submit_plan call on the last turn so the loop always terminates. */
+const MAX_AGENT_TURNS = 6;
 
 /**
- * Claude-backed planner. Sends the musical context (current track, candidate
- * crate, energy target, personality/mode) and receives a structured decision.
- * Enabled when ANTHROPIC_API_KEY is present; falls back to heuristics on error.
+ * Claude-backed planner, calling the Anthropic API directly, run as a
+ * tool-using agent (brainstorm §2 / HANDOFF §4B): it plans, consults
+ * get_trends/get_library when useful, and must validate its pick with
+ * critique_mix before submitting — the "measure → critique → correct" loop
+ * applied to the LLM's own decision, not just the local brain. Enabled when
+ * ANTHROPIC_API_KEY is present; any failure (malformed output, network,
+ * exhausted turn budget) throws and services/ai/index.ts falls back to the
+ * next planner (OpenRouter, then heuristics).
  */
 export class ClaudePlanner implements DJPlanner {
   readonly name = 'claude';
@@ -54,60 +48,84 @@ export class ClaudePlanner implements DJPlanner {
     const scores = req.candidates.map((t) => scoreCandidate(t, req)).sort((a, b) => b.total - a.total);
     const shortlist = scores.slice(0, 12).map((s) => req.candidates.find((t) => t.id === s.trackId)!);
 
-    const response = await this.getClient().messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      thinking: { type: 'adaptive' },
-      output_config: {
-        effort: 'low',
-        format: { type: 'json_schema', schema: PLAN_SCHEMA },
-      },
-      system:
-        'Eres un DJ profesional con décadas de experiencia. Eliges el siguiente tema ' +
-        'y la transición ideal aplicando mezcla armónica (rueda Camelot), compatibilidad ' +
-        'de BPM, narrativa de energía y memoria del set (no repetir artistas). ' +
-        'Responde únicamente con el JSON pedido.',
-      messages: [
-        {
-          role: 'user',
-          content: JSON.stringify({
-            nowPlaying: req.current
-              ? { id: req.current.id, title: req.current.title, artist: req.current.artist, bpm: req.current.bpm, key: req.current.key, energy: req.current.energy, genre: req.current.genre, mood: req.current.mood }
-              : null,
-            targetEnergy: req.targetEnergy,
-            energyState: req.energyState,
-            personality: req.personality,
-            mode: req.mode,
-            recentArtists: req.recentArtists,
-            candidates: shortlist.map((t) => ({ id: t.id, title: t.title, artist: t.artist, bpm: t.bpm, key: t.key, energy: t.energy, genre: t.genre, mood: t.mood, popularity: t.popularity })),
-          }),
-        },
-      ],
-    });
+    const ctx: ToolContext = { req, knownTracks: new Map(shortlist.map((t) => [t.id, t])) };
+    const tools = [...AGENT_TOOLS.map((t) => t.definition), SUBMIT_PLAN_TOOL] as Anthropic.Tool[];
 
-    const text = response.content.find((b) => b.type === 'text');
-    if (!text || text.type !== 'text') throw new Error('empty Claude response');
-    const plan = JSON.parse(text.text) as ClaudePlan;
+    const messages: Anthropic.MessageParam[] = [
+      { role: 'user', content: buildAgentPrompt(req, shortlist) },
+    ];
 
-    const chosen = shortlist.find((t) => t.id === plan.trackId) ?? shortlist[0];
-    const base = planTransition(req.current, chosen, req);
-    const type = (TRANSITION_MAP.has(plan.transitionType as TransitionType)
-      ? plan.transitionType
-      : base.type) as TransitionType;
-    const beats = Number.isFinite(plan.beats) ? Math.max(1, Math.min(64, plan.beats)) : base.beats;
-    const secPerBeat = req.current ? 60 / req.current.bpm : 0.5;
+    const client = this.getClient();
+    let submitted: SubmitPlanInput | null = null;
 
-    return {
-      trackId: chosen.id,
-      transition: {
-        ...base,
-        type,
-        beats,
-        startBeforeEnd: beats * secPerBeat,
-        reason: plan.reason || base.reason,
-      },
-      scores: scores.slice(0, 8),
-      engine: 'claude',
-    };
+    for (let turn = 0; turn < MAX_AGENT_TURNS && !submitted; turn++) {
+      const forceFinish = turn === MAX_AGENT_TURNS - 1;
+      const response = await client.messages.create({
+        model: MODEL,
+        max_tokens: 2048,
+        system: AGENT_SYSTEM_PROMPT,
+        tools,
+        tool_choice: forceFinish ? { type: 'tool', name: 'submit_plan' } : { type: 'auto' },
+        messages,
+      });
+
+      messages.push({ role: 'assistant', content: response.content as unknown as Anthropic.ContentBlockParam[] });
+
+      if (response.stop_reason !== 'tool_use') {
+        // Answered in plain text instead of calling a tool — let the caller
+        // fall back to heuristics rather than guessing at a decision.
+        break;
+      }
+
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const block of response.content) {
+        if (block.type !== 'tool_use') continue;
+        if (block.name === 'submit_plan') {
+          submitted = block.input as SubmitPlanInput;
+          break;
+        }
+        const tool = AGENT_TOOL_MAP.get(block.name);
+        const result = tool
+          ? await tool.run(block.input as Record<string, unknown>, ctx)
+          : { error: `unknown tool: ${block.name}` };
+        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+      }
+      if (submitted) break;
+      messages.push({ role: 'user', content: toolResults });
+    }
+
+    if (!submitted) throw new Error('claude agent did not submit a plan within the turn budget');
+    return finalizePlan(req, ctx, shortlist, scores, submitted, 'claude');
   }
+}
+
+/** Shared by every agent planner: turn the model's submit_plan call into a PlanNextResponse. */
+export function finalizePlan(
+  req: PlanNextRequest,
+  ctx: ToolContext,
+  shortlist: PlanNextRequest['candidates'],
+  scores: PlanNextResponse['scores'],
+  submitted: SubmitPlanInput,
+  engine: PlanNextResponse['engine'],
+): PlanNextResponse {
+  const chosen = ctx.knownTracks.get(submitted.trackId) ?? shortlist[0];
+  const base = planTransition(req.current, chosen, req);
+  const type = (TRANSITION_MAP.has(submitted.transitionType as TransitionType)
+    ? submitted.transitionType
+    : base.type) as TransitionType;
+  const beats = Number.isFinite(submitted.beats) ? Math.max(1, Math.min(64, submitted.beats)) : base.beats;
+  const secPerBeat = req.current ? 60 / req.current.bpm : 0.5;
+
+  return {
+    trackId: chosen.id,
+    transition: {
+      ...base,
+      type,
+      beats,
+      startBeforeEnd: beats * secPerBeat,
+      reason: submitted.reason || base.reason,
+    },
+    scores: scores.slice(0, 8),
+    engine,
+  };
 }
