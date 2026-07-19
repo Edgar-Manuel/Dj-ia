@@ -143,14 +143,51 @@ OpenRouter (esta sesión sí tuvo red abierta — ver nota actualizada en §3).
 - `server/tests/trends.test.mjs` (parser de Deezer contra fixtures reales) →
   **5 tests, todos verdes** (`npm test -w @ai-dj/server`).
 - `npm run typecheck` y `npm run build` verdes en los 3 workspaces.
-- **No verificado en este entorno**: el loop de agente de `claudePlanner.ts`/
-  `openRouterPlanner.ts` en vivo — ni `ANTHROPIC_API_KEY` ni
-  `OPENROUTER_API_KEY` estaban disponibles en esta sesión. La ruta de
-  fallback a heurístico sí está verificada (es la que se usa por defecto sin
-  key). Primera cosa a probar en casa con tus keys: arranca el server con
-  una de las dos y pide un `plan-next` con un `current` track — deberías ver
-  en los logs las llamadas a `get_trends`/`get_library`/`critique_mix` antes
-  del resultado final.
+- **Verificado en producción (2026-07-19)**: tras desplegar a InsForge
+  Compute (ver §8), un `POST /api/ai/plan-next` real devolvió
+  `"engine": "openrouter"` y el agente **llamó `get_trends` por iniciativa
+  propia** (sin que el request pidiera tendencias) y **`critique_mix` antes
+  de decidir** — la razón devuelta lo dice explícitamente: *"Quevedo está
+  pegando fuerte en las tendencias de España ahora mismo... Veredicto de
+  critique_mix: accept sin incidencias"*. El bucle de agente funciona
+  end-to-end tal como se diseñó.
+
+## 8. Desplegado en InsForge Compute (2026-07-19)
+
+La app corre como contenedor en InsForge Compute (Fly.io por debajo, gestionado
+por InsForge — nunca uses `flyctl` directo con tus propias credenciales, la
+cuenta de Fly es de InsForge):
+
+- **Proyecto InsForge**: `Dj-ia` (`a09b61f4-035b-41bd-a53f-b67216d5d114`),
+  org personal, región `eu-central`.
+- **Servicio compute**: `dj-ia` (`7a8d07b8-e98b-4829-89a2-326fdc793df5`).
+- **Endpoint**: https://dj-ia-a09b61f4-035b-41bd-a53f-b67216d5d114.fly.dev
+- **`Dockerfile`** (nuevo, raíz del repo): build multi-stage que preserva la
+  disposición de carpetas del monorepo (necesaria porque `app.ts` sirve
+  `client/dist` con una ruta relativa a `server/dist`, y `@ai-dj/shared` se
+  consume vía el symlink de npm workspaces).
+- **Variables de entorno del contenedor**: `OPENROUTER_API_KEY` (provisionada
+  por InsForge, ver `npx @insforge/cli ai setup` — no es una cuenta de
+  OpenRouter propia) + `AI_DJ_OPENROUTER_MODEL=anthropic/claude-opus-4.8` +
+  `NODE_ENV=production`.
+- **Redeploy** tras cambios de código:
+  ```bash
+  npx @insforge/cli compute deploy . --name dj-ia --port 4000 --env-file <archivo-fuera-del-repo>
+  ```
+  (usa el mismo `--name` para actualizar el servicio existente en vez de
+  crear uno nuevo).
+- **Rotar/añadir una env var sin perder las demás**:
+  ```bash
+  npx @insforge/cli compute update 7a8d07b8-e98b-4829-89a2-326fdc793df5 --env-set NUEVA_KEY=valor
+  ```
+- **Logs**: `npx @insforge/cli logs insforge.logs` (o el dashboard del
+  proyecto).
+- ⚠️ Servicios compute están en **private preview** de InsForge — la API,
+  cuotas y flags pueden cambiar entre releases.
+
+Este es un tercer camino de despliegue junto a `vercel.json` (cliente
+estático) y `render.yaml` (full-stack) — no se han retirado, siguen siendo
+válidos si en algún momento prefieres esas plataformas.
 
 ---
 

@@ -78,6 +78,10 @@ npm run dev:server
 
 Sin ninguna API key, el sistema usa el cerebro heurístico (misma lógica de scoring, cero latencia). El botón «IA» de la cabecera muestra el motor activo (`heuristic` / `claude` / `openrouter`).
 
+### Despliegue
+
+Tres caminos válidos, no excluyentes: `vercel.json` (cliente estático), `render.yaml` (full-stack) o **InsForge Compute** (contenedor Fly.io gestionado por InsForge, usando el `Dockerfile` de la raíz — `npx @insforge/cli compute deploy . --name dj-ia --port 4000 --env-file <.env fuera del repo>`). Detalle completo, incluido cómo se provisiona `OPENROUTER_API_KEY` vía `npx @insforge/cli ai setup`, en `docs/HANDOFF.md §8`.
+
 ## 🧠 Cómo piensa el DJ
 
 1. **Candidatos**: la memoria del set filtra la biblioteca (géneros activos, sin repetidos, artistas recientes penalizados).
